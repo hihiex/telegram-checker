@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checker</title>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0d0d0d;
+      font-family: 'IBM Plex Mono', monospace;
+      color: #e0e0e0;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0;
+      width: 320px;
+    }
+
+    .input-field {
+      width: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid #333;
+      outline: none;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 1.5rem;
+      font-weight: 300;
+      color: #e0e0e0;
+      padding: 8px 0;
+      letter-spacing: 0.04em;
+      transition: border-color 0.2s;
+      caret-color: #888;
+    }
+
+    .input-field:focus {
+      border-bottom-color: #666;
+    }
+
+    /* hide number spinners */
+    .input-field::-webkit-outer-spin-button,
+    .input-field::-webkit-inner-spin-button { -webkit-appearance: none; }
+    .input-field[type=number] { -moz-appearance: textfield; }
+
+    /* result card */
+    .result {
+      width: 100%;
+      margin-top: 18px;
+      border-left: 1px solid #2a2a2a;
+      padding: 14px 16px;
+      background: #111;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .result.visible {
+      display: flex;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .result-line {
+      font-size: 0.72rem;
+      font-weight: 300;
+      color: #555;
+      letter-spacing: 0.03em;
+      line-height: 1.6;
+    }
+
+    .result-line span {
+      color: #888;
+    }
+
+    /* forward button */
+    .btn-forward {
+      margin-top: 18px;
+      background: transparent;
+      border: 1px solid #2a2a2a;
+      color: #444;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 0.7rem;
+      font-weight: 300;
+      letter-spacing: 0.1em;
+      text-transform: lowercase;
+      padding: 8px 14px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+      display: block;
+    }
+
+    .btn-forward:hover {
+      border-color: #555;
+      color: #888;
+    }
+
+    .btn-forward.hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <input
+      class="input-field"
+      type="number"
+      id="mainInput"
+      autocomplete="off"
+      spellcheck="false"
+    />
+
+    <div class="result" id="resultPanel">
+      <div class="result-line">The ID I received was: <span id="outId"></span></div>
+      <div class="result-line">Account creation date: <span id="outDate"></span></div>
+    </div>
+
+    <button class="btn-forward" id="btnForward">check by forward</button>
+  </div>
+
+  <script>
+    const input = document.getElementById('mainInput');
+    const panel = document.getElementById('resultPanel');
+    const btn   = document.getElementById('btnForward');
+    const outId = document.getElementById('outId');
+    const outDate = document.getElementById('outDate');
+    const container = document.querySelector('.container');
+
+    // Калибровочные точки для вычисления даты
+    const calibrationPoints = [
+      [1, new Date(2013, 7, 14)],           // Запуск Telegram
+      [100000000, new Date(2015, 0, 1)],    // ~100M
+      [500000000, new Date(2017, 5, 1)],    // ~500M
+      [1000000000, new Date(2018, 11, 1)],  // ~1B
+      [1500000000, new Date(2020, 0, 1)],   // ~1.5B
+      [2058931834, new Date(2021, 9, 15)],  // Октябрь 2021
+      [5620576772, new Date(2022, 7, 15)],  // Август 2022
+      [5705499781, new Date(2022, 8, 1)],   // Сентябрь 2022
+      [6000000000, new Date(2022, 11, 1)],  // Конец 2022
+      [6500000000, new Date(2023, 2, 1)],   // Весна 2023
+      [7000000000, new Date(2023, 6, 1)],   // Лето 2023
+      [7500000000, new Date(2023, 9, 1)],   // Осень 2023
+      [8128837232, new Date(2025, 10, 15)], // Ноябрь 2025
+      [8167713472, new Date(2024, 1, 1)],   // Февраль 2024
+      [8350998162, new Date(2024, 7, 1)],   // Август 2024
+      [8562480383, new Date(2025, 2, 1)],   // Март 2025
+      [8700000000, new Date(2026, 1, 13)]   // Текущая дата
+    ];
+
+    // Сортируем точки по ID
+    calibrationPoints.sort((a, b) => a[0] - b[0]);
+
+    function estimateCreationDate(userId) {
+      const currentDate = new Date();
+      
+      // Если ID меньше самой ранней точки - экстраполяция назад
+      if (userId < calibrationPoints[0][0]) {
+        const [firstId, firstDate] = calibrationPoints[0];
+        const [secondId, secondDate] = calibrationPoints[1];
+        
+        const idDiff = secondId - firstId;
+        const timeDiff = (secondDate - firstDate) / 1000; // в секундах
+        const idsPerSecond = idDiff / timeDiff;
+        
+        const idDistance = firstId - userId;
+        const secondsBack = idDistance / idsPerSecond;
+        const estimatedDate = new Date(firstDate - secondsBack * 1000);
+        
+        // Не раньше запуска Telegram
+        const telegramLaunch = new Date(2013, 7, 14);
+        if (estimatedDate < telegramLaunch) {
+          return telegramLaunch;
+        }
+        return estimatedDate;
+      }
+      
+      // Если ID больше самой поздней точки - ограниченная экстраполяция
+      if (userId > calibrationPoints[calibrationPoints.length - 1][0]) {
+        const [lastId, lastDate] = calibrationPoints[calibrationPoints.length - 1];
+        const [prevId, prevDate] = calibrationPoints[calibrationPoints.length - 2];
+        
+        const idDiff = lastId - prevId;
+        const timeDiff = (lastDate - prevDate) / 1000;
+        const idsPerSecond = idDiff / timeDiff;
+        
+        const idDistance = userId - lastId;
+        const secondsForward = idDistance / idsPerSecond;
+        const estimatedDate = new Date(lastDate.getTime() + secondsForward * 1000);
+        
+        // Ограничиваем текущей датой
+        if (estimatedDate > currentDate) {
+          return currentDate;
+        }
+        return estimatedDate;
+      }
+      
+      // Интерполяция между двумя ближайшими точками
+      for (let i = 0; i < calibrationPoints.length - 1; i++) {
+        const [lowerId, lowerDate] = calibrationPoints[i];
+        const [upperId, upperDate] = calibrationPoints[i + 1];
+        
+        if (userId >= lowerId && userId <= upperId) {
+          const idDiff = upperId - lowerId;
+          const timeDiff = (upperDate - lowerDate) / 1000;
+          
+          const position = (userId - lowerId) / idDiff;
+          const secondsFromLower = timeDiff * position;
+          const estimatedDate = new Date(lowerDate.getTime() + secondsFromLower * 1000);
+          
+          return estimatedDate;
+        }
+      }
+      
+      return new Date(2022, 0, 1);
+    }
+
+    function formatDate(date) {
+      const monthsRu = [
+        "января", "февраля", "марта", "апреля", "мая", "июня",
+        "июля", "августа", "сентября", "октября", "ноября", "декабря"
+      ];
+      
+      const day = date.getDate();
+      const month = monthsRu[date.getMonth()];
+      const year = date.getFullYear();
+      
+      return `${day} ${month} ${year} года`;
+    }
+
+    input.addEventListener('input', () => {
+      const val = input.value.trim();
+      if (val !== '' && !isNaN(val)) {
+        const userId = parseInt(val);
+        
+        // Вычисляем дату
+        const estimatedDate = estimateCreationDate(userId);
+        const formattedDate = formatDate(estimatedDate);
+        
+        // Обновляем данные
+        outId.textContent = userId.toLocaleString('en-US');
+        outDate.textContent = formattedDate;
+        
+        // Показываем панель результатов
+        panel.style.display = 'flex';
+        requestAnimationFrame(() => panel.classList.add('visible'));
+        btn.classList.add('hidden');
+      } else {
+        panel.classList.remove('visible');
+        setTimeout(() => { 
+          if (!panel.classList.contains('visible')) panel.style.display = 'none'; 
+        }, 200);
+        btn.classList.remove('hidden');
+      }
+    });
+
+    // Обработчик кнопки "check by forward"
+    btn.addEventListener('click', () => {
+      container.innerHTML = '<div style="font-size: 1.2rem; color: #666; letter-spacing: 0.05em;">do it in bot xd</div>';
+    });
+  </script>
+</body>
+</html>
